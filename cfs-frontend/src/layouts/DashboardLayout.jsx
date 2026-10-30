@@ -33,6 +33,7 @@ const adminLinks = [
   { label: "Credit assessments", path: "/admin/assessments", icon: Activity },
   { label: "Approvals", path: "/admin/approvals", icon: ShieldCheck },
   { label: "Disbursements", path: "/admin/disbursements", icon: Wallet },
+  { label: "EMI schedules", path: "/admin/emi", icon: CreditCard },
   { label: "Repayments", path: "/admin/repayments", icon: FileClock },
   { label: "Notifications", path: "/admin/notifications", icon: Bell },
   { label: "Settings", path: "/admin/settings", icon: Settings },
@@ -43,6 +44,8 @@ const roleLinks = {
     { label: "Overview", path: "/admin", icon: Gauge, end: true },
     { label: "Applications", path: "/admin/applications", icon: FileText },
     { label: "Review queue", path: "/admin/review-queue", icon: ClipboardCheck },
+    { label: "EMI schedules", path: "/admin/emi", icon: CreditCard },
+    { label: "Repayments", path: "/admin/repayments", icon: FileClock },
     { label: "Notifications", path: "/admin/notifications", icon: Bell },
   ],
   CREDIT_ANALYST: [

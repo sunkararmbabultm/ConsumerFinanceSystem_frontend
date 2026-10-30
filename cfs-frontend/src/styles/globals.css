@@ -264,6 +264,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .button-danger { color: #fff; background: var(--danger); }
 .button-danger:hover:not(:disabled) { filter: brightness(.94); }
+.field-error { color: var(--danger); font-size: .8rem; font-weight: 600; }
 .small-button { min-height: 32px; padding-inline: 10px; font-size: 10px; }
 .apply-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; }
 .apply-guidance { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }

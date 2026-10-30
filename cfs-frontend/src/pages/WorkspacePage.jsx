@@ -4,6 +4,8 @@ import { ArrowRight, Check, ChevronLeft, ChevronRight, Eye, EyeOff, FileText, Re
 import { useAuth } from "../context/useAuth";
 import { AdminApplicationsWorkspace, ApplicationDetails, DetailDialog, LoanProductsWorkspace, ProductDetails } from "../components/FinanceWorkspace";
 import ApprovalsWorkspace from "../components/ApprovalsWorkspace";
+import DisbursementsWorkspace from "../components/DisbursementsWorkspace";
+import { EmiScheduleWorkspace, RepaymentHistoryWorkspace } from "../components/EmiWorkspace";
 import CreditAssessmentsWorkspace from "../components/CreditAssessmentsWorkspace";
 import { createApproval } from "../services/approvalService";
 import { getAssessmentForApplication } from "../services/creditAssessmentService";
@@ -14,7 +16,7 @@ import { markNotificationRead as updateNotificationRead } from "../services/noti
 import { getAdminKycDetails, listAdminKycRecords, rejectCustomerKyc, verifyCustomerKyc } from "../services/kycService";
 
 const titles = {
-  profile: "My profile", apply: "Apply for finance", applications: "My applications", disbursement: "Disbursement",
+  profile: "My profile", apply: "Apply for finance", applications: "My applications", disbursement: "Disbursement", disbursements: "Disbursements",
   emi: "EMI schedule", repayments: "Repayment history", notifications: "Notifications", settings: "Settings",
   "review-queue": "Finance application review", customers: "Customers", approvals: "Approval history", users: "Internal users",
   assessments: "Credit assessments", decisions: "Decision queue", kyc: "KYC review", "loan-products": "Loan products",
@@ -812,11 +814,26 @@ export default function WorkspacePage() {
   const isAdmin = user?.role !== "CUSTOMER";
   const title = titles[section] || "Finance workspace";
 
+  if (section === "disbursement" || section === "disbursements") {
+    return <div className="page-stack page-enter">
+      <section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1></div></section>
+      <DisbursementsWorkspace key={user?.id} user={user} />
+    </div>;
+  }
+
   if (section === "assessments") {
     const canAssess = ["ADMIN", "CREDIT_ANALYST", "CREDIT_MANAGER"].includes(user?.role);
     return <div className="page-stack page-enter">
       <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1></div></section>
       {canAssess ? <CreditAssessmentsWorkspace /> : <div className="inline-error" role="alert">Only administrators, credit analysts, and credit managers can access credit assessments.</div>}
+    </div>;
+  }
+
+  if (section === "emi" || section === "repayments") {
+    const canView = ["CUSTOMER", "ADMIN", "LOAN_OFFICER"].includes(user?.role);
+    return <div className="page-stack page-enter">
+      <section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1></div></section>
+      {!canView ? <div className="inline-error" role="alert">You do not have access to EMI and repayment records.</div> : section === "emi" ? <EmiScheduleWorkspace user={user} /> : <RepaymentHistoryWorkspace user={user} />}
     </div>;
   }
 
