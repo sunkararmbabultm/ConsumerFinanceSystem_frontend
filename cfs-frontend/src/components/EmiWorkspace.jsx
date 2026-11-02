@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { CreditCard, Eye, Plus, RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, CreditCard, Eye, Plus, RefreshCw, Search } from "lucide-react";
 import { DetailDialog } from "./FinanceWorkspace";
-import { generateEmiSchedule, getLoanAccountForApplication, listInstallments } from "../services/emiService";
+import { generateEmiSchedule, getLoanAccountForApplication, listAllSchedules, listInstallments } from "../services/emiService";
 import { getRepayment, listApplicationRepayments, recordRepayment } from "../services/repaymentService";
+import { notifyEmiPaymentSuccess, notifyRepaymentCreated } from "../services/notificationService";
 import { listWorkspaceApplications } from "../services/financeApplicationService";
 
 const isPositiveInteger = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -97,7 +98,8 @@ function GenerateScheduleDrawer({ onClose, onDone, onViewExisting }) {
     }
     setSaving(true);
     try {
-      await generateEmiSchedule({ applicationId: Number(form.applicationId), customerId: Number(form.customerId), disbursementId: Number(form.disbursementId), principalAmount, annualInterestRate, tenureMonths: Number(form.tenureMonths), firstDueDate: form.firstDueDate });
+      const schedule = await generateEmiSchedule({ applicationId: Number(form.applicationId), customerId: Number(form.customerId), disbursementId: Number(form.disbursementId), principalAmount, annualInterestRate, tenureMonths: Number(form.tenureMonths), firstDueDate: form.firstDueDate });
+      notifyRepaymentCreated({ customerId: Number(form.customerId), applicationId: Number(form.applicationId), disbursementId: Number(form.disbursementId), monthlyEmiAmount: schedule?.monthlyEmiAmount });
       onDone(form.applicationId);
     } catch (failure) {
       const errors = validationErrors(failure);
@@ -124,7 +126,7 @@ function GenerateScheduleDrawer({ onClose, onDone, onViewExisting }) {
   </DetailDialog>;
 }
 
-function PaymentDrawer({ loanAccountId, installment, onClose, onDone }) {
+function PaymentDrawer({ loanAccountId, account, installment, onClose, onDone }) {
   const { installmentNumber } = installment;
   const amount = Number(installment.emiAmount);
   const [remarks, setRemarks] = useState(`EMI payment for installment ${installment.installmentNumber}`);
@@ -140,7 +142,8 @@ function PaymentDrawer({ loanAccountId, installment, onClose, onDone }) {
     }
     setSaving(true);
     try {
-      await recordRepayment({ loanAccountId: Number(loanAccountId), emiId: installment.emiId, amount: Number(amount), paymentMethod: "SIMULATED", remarks: remarks.trim() });
+      const repayment = await recordRepayment({ loanAccountId: Number(loanAccountId), emiId: installment.emiId, amount: Number(amount), paymentMethod: "SIMULATED", remarks: remarks.trim() });
+      notifyEmiPaymentSuccess({ customerId: account?.customerId, applicationId: account?.applicationId, repaymentId: repayment?.repaymentId, scheduleId: installment.emiId, amount });
       onDone(`Payment recorded for installment ${installmentNumber}.`);
     } catch (failure) {
       setError(errorMessage(failure, "Unable to record the payment."));
@@ -168,8 +171,11 @@ function PaymentDrawer({ loanAccountId, installment, onClose, onDone }) {
 export function EmiScheduleWorkspace({ user }) {
   const canGenerate = user?.role === "ADMIN";
   const canPay = ["ADMIN", "CUSTOMER"].includes(user?.role);
-  const [applicationId, setApplicationId] = useState("");
-  const [attempt, setAttempt] = useState(0);
+  const canBrowseAll = ["ADMIN", "LOAN_OFFICER"].includes(user?.role);
+  const [schedules, setSchedules] = useState([]);
+  const [listLoading, setListLoading] = useState(canBrowseAll);
+  const [listError, setListError] = useState("");
+  const [listAttempt, setListAttempt] = useState(0);
   const [summary, setSummary] = useState(null);
   const [installments, setInstallments] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -179,47 +185,87 @@ export function EmiScheduleWorkspace({ user }) {
   const [payTarget, setPayTarget] = useState(null);
 
   useEffect(() => {
-    if (!applicationId) return undefined;
+    if (!canBrowseAll) return undefined;
     let current = true;
-    async function load() {
-      try {
-        const account = await getLoanAccountForApplication(applicationId);
-        const loanAccountId = account?.loanAccountId;
-        if (loanAccountId == null) throw new Error("The loan account has no ID.");
-        const rows = list(await listInstallments(loanAccountId));
-        if (current) { setSummary(account); setInstallments(rows); }
-      } catch (failure) {
-        if (current) { setSummary(null); setInstallments([]); setError(errorMessage(failure, "Unable to load the EMI schedule.")); }
-      } finally {
-        if (current) setLoading(false);
-      }
-    }
-    load();
+    listAllSchedules()
+      .then((response) => { if (current) { setSchedules(list(response)); setListError(""); } })
+      .catch((failure) => { if (current) setListError(errorMessage(failure, "Unable to load EMI schedules.")); })
+      .finally(() => { if (current) setListLoading(false); });
     return () => { current = false; };
-  }, [applicationId, attempt]);
+  }, [canBrowseAll, listAttempt]);
 
-  function search(id) {
+  async function openSchedule(account) {
+    setError("");
+    setFeedback("");
+    setLoading(true);
+    setSummary(account);
+    setInstallments([]);
+    try {
+      setInstallments(list(await listInstallments(account.loanAccountId)));
+    } catch (failure) {
+      setError(errorMessage(failure, "Unable to load the EMI installments."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function search(applicationId) {
     setError("");
     setLoading(true);
-    setApplicationId(id);
-    setAttempt((value) => value + 1);
+    setSummary(null);
+    setInstallments([]);
+    try {
+      const account = await getLoanAccountForApplication(applicationId);
+      if (account?.loanAccountId == null) throw new Error("The loan account has no ID.");
+      setSummary(account);
+      setInstallments(list(await listInstallments(account.loanAccountId)));
+    } catch (failure) {
+      setError(errorMessage(failure, "Unable to load the EMI schedule."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function backToList() {
+    setSummary(null);
+    setInstallments([]);
+    setError("");
+    setFeedback("");
+    setListLoading(true);
+    setListAttempt((value) => value + 1);
+  }
+
+  function refresh() {
+    if (summary?.applicationId != null) search(String(summary.applicationId));
+    else { setError(""); setListLoading(true); setListAttempt((value) => value + 1); }
   }
 
   const loanAccountId = summary?.loanAccountId;
   const isPayable = (row) => ["PENDING", "OVERDUE"].includes(String(row.status ?? "").toUpperCase());
+  const scheduleFields = (account) => [["Application ID", account.applicationId], ["Customer ID", account.customerId], ["Principal", money(account.principalAmount)], ["Monthly EMI", money(account.monthlyEmiAmount)], ["Tenure", account.tenureMonths != null ? `${account.tenureMonths} months` : null], ["Outstanding", money(account.outstandingAmount)]];
   return <div className="page-stack">
     {feedback && <div className="inline-message" role="status">{feedback}</div>}
     {showGenerate && <GenerateScheduleDrawer onClose={() => setShowGenerate(false)} onDone={(id) => { setShowGenerate(false); setFeedback(`EMI schedule generated for application ${id}.`); search(id); }} onViewExisting={(id) => { setShowGenerate(false); setFeedback(""); search(id); }} />}
-    {payTarget && <PaymentDrawer loanAccountId={loanAccountId} installment={payTarget} onClose={() => setPayTarget(null)} onDone={(message) => { setPayTarget(null); setFeedback(message); search(applicationId); }} />}
+    {payTarget && <PaymentDrawer loanAccountId={loanAccountId} account={summary} installment={payTarget} onClose={() => setPayTarget(null)} onDone={(message) => { setPayTarget(null); setFeedback(message); search(String(summary?.applicationId)); }} />}
     <section className="panel">
-      <div className="panel-heading"><h2>Loan account</h2><div className="workspace-tools">
+      <div className="panel-heading"><h2>{summary ? "Loan account" : canBrowseAll ? "All EMI schedules" : "Loan account"}</h2><div className="workspace-tools">
+        {canBrowseAll && (summary || error) && <button className="button button-secondary small-button" type="button" onClick={backToList}><ArrowLeft size={14} /> All schedules</button>}
         {canGenerate && <button className="button button-primary small-button" type="button" onClick={() => { setFeedback(""); setShowGenerate(true); }}><Plus size={16} /> Generate schedule</button>}
-        {applicationId && <button className="icon-button" type="button" aria-label="Refresh schedule" title="Refresh schedule" disabled={loading} onClick={() => search(applicationId)}><RefreshCw size={17} /></button>}
+        <button className="icon-button" type="button" aria-label="Refresh" title="Refresh" disabled={loading || listLoading} onClick={refresh}><RefreshCw size={17} /></button>
       </div></div>
       <ApplicationPicker user={user} busy={loading} onSearch={search} />
       {loading ? <p role="status">Loading EMI schedule...</p> : error ? <div className="inline-error" role="alert">{error}</div> : summary ? <dl className="finance-details">
         {[["Loan account", summary.loanAccountId], ["Application ID", summary.applicationId], ["Customer ID", summary.customerId], ["Disbursement ID", summary.disbursementId], ["Principal", money(summary.principalAmount)], ["Interest rate", summary.annualInterestRate != null ? `${Number(summary.annualInterestRate)}% p.a.` : null], ["Tenure", summary.tenureMonths != null ? `${summary.tenureMonths} months` : null], ["Monthly EMI", money(summary.monthlyEmiAmount)], ["Total payable", money(summary.totalPayableAmount)], ["Outstanding", money(summary.outstandingAmount)], ["Start date", summary.startDate], ["Maturity date", summary.maturityDate], ["Status", summary.status]].map(([text, value]) => <div key={text}><dt>{text}</dt><dd>{value ?? "-"}</dd></div>)}
-      </dl> : <p>Select an application to view its EMI schedule.</p>}
+      </dl> : canBrowseAll ? (
+        listLoading ? <p role="status">Loading EMI schedules...</p>
+          : listError ? <div className="inline-error" role="alert">{listError}</div>
+            : schedules.length === 0 ? <p>No EMI schedules generated yet.</p>
+              : <div className="schedule-grid">{schedules.map((account) => <article className="schedule-card" key={account.loanAccountId}>
+                <div className="schedule-card-head"><h3>Loan account #{account.loanAccountId}</h3><span className={emiStatusClass(account.status)}>{account.status ?? "-"}</span></div>
+                <dl>{scheduleFields(account).map(([text, value]) => <div key={text}><dt>{text}</dt><dd>{value ?? "-"}</dd></div>)}</dl>
+                <button className="button button-secondary small-button" type="button" onClick={() => openSchedule(account)}><Eye size={14} /> View installments</button>
+              </article>)}</div>
+      ) : <p>Select an application to view its EMI schedule.</p>}
     </section>
     {summary && !loading && !error && <section className="panel">
       <div className="panel-heading"><h2>EMI installments</h2></div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, ClipboardCheck, Eye, Plus, RefreshCw, X } from "lucide-react";
 import { DetailDialog } from "./FinanceWorkspace";
 import { createApproval, getApproval, getApprovalForApplication, getApprovalReview, listApprovals, listApprovalsByReviewer, listApprovalsByStatus, listPendingApprovals } from "../services/approvalService";
+import { notifyApplicationDecision } from "../services/notificationService";
 
 function records(response) {
   if (Array.isArray(response)) return response;
@@ -77,7 +78,8 @@ function ReviewDrawer({ pending, onClose, onDone }) {
     }
     setSaving(true);
     try {
-      await createApproval({ applicationId: Number(pending.applicationId), creditAssessmentId: Number(review?.creditAssessmentId ?? pending.creditAssessmentId), status: decision, remarks: remarks.trim() });
+      const approval = await createApproval({ applicationId: Number(pending.applicationId), creditAssessmentId: Number(review?.creditAssessmentId ?? pending.creditAssessmentId), status: decision, remarks: remarks.trim() });
+      notifyApplicationDecision({ customerId: pending.customerId ?? review?.customerId ?? approval?.customerId, applicationId: Number(pending.applicationId), approvalId: approval?.approvalId, approved: decision === "APPROVED" });
       onDone(`Application ${pending.applicationId} ${decision.toLowerCase()} successfully.`);
     } catch (failure) {
       setSaveError(errorMessage(failure, "Unable to record the decision."));
@@ -216,7 +218,8 @@ export default function ApprovalsWorkspace({ isAdmin }) {
     }
     setSaving(true);
     try {
-      await createApproval({ applicationId, creditAssessmentId, status: form.status, remarks: form.remarks.trim() });
+      const approval = await createApproval({ applicationId, creditAssessmentId, status: form.status, remarks: form.remarks.trim() });
+      notifyApplicationDecision({ customerId: approval?.customerId, applicationId, approvalId: approval?.approvalId, approved: form.status === "APPROVED" });
       setFeedback(`Application ${applicationId} ${form.status.toLowerCase()} successfully.`);
       setForm({ applicationId: "", creditAssessmentId: "", status: "APPROVED", remarks: "" });
       setShowCreate(false);

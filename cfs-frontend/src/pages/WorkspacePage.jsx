@@ -12,7 +12,7 @@ import { getAssessmentForApplication } from "../services/creditAssessmentService
 import { createInternalUser } from "../services/authService";
 import { createCustomer, createCustomerAddress, createCustomerBankAccount, createCustomerDocument, createCustomerEmployment, getCustomerByUserId, getCustomerAddresses, getCustomerEmployment, getCustomerBankAccounts, getCustomerDocuments, getCustomerOnboardingStatus, updateKycStatus } from "../services/customerService";
 import { createDraftFinanceApplication, listLoanProducts, listWorkspaceApplications, submitFinanceApplication } from "../services/financeApplicationService";
-import { markNotificationRead as updateNotificationRead } from "../services/notificationService";
+import { listCustomerNotifications, listNotifications, markNotificationRead as updateNotificationRead, notifyApplicationSubmitted } from "../services/notificationService";
 import { getAdminKycDetails, listAdminKycRecords, rejectCustomerKyc, verifyCustomerKyc } from "../services/kycService";
 
 const titles = {
@@ -73,7 +73,7 @@ function DataWorkspace({ section, isAdmin, user }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState("");
 
-  const hasService = section === "applications" && !isAdmin;
+  const hasService = (section === "applications" && !isAdmin) || section === "notifications";
   const [loading, setLoading] = useState(hasService);
   const [retryCount, setRetryCount] = useState(0);
 
@@ -82,7 +82,17 @@ function DataWorkspace({ section, isAdmin, user }) {
     let current = true;
     async function fetchRecords() {
       try {
-        const response = await listWorkspaceApplications(false, user?.id);
+        let response;
+        if (section === "notifications") {
+          if (isAdmin) {
+            response = await listNotifications();
+          } else {
+            const customer = await getCustomerByUserId(user?.id);
+            response = await listCustomerNotifications(customer.customerId);
+          }
+        } else {
+          response = await listWorkspaceApplications(false, user?.id);
+        }
         if (current) setData(unwrap(response));
       } catch {
         if (current) setError(`Unable to load ${titles[section]?.toLowerCase() || "this information"}.`);
@@ -258,6 +268,7 @@ function ApplyFinance({ user }) {
     try {
       draft = await createDraftFinanceApplication(requestPayload());
       const submitted = await submitFinanceApplication(draft.applicationId);
+      notifyApplicationSubmitted({ customerId: Number(customerId), applicationId: draft.applicationId });
       setResult({ id: submitted?.applicationNumber || draft?.applicationNumber || submitted?.applicationId || draft?.applicationId || "—", status: "SUBMITTED" });
     } catch (requestError) {
       const detail = requestError.response?.data?.message || "Please try again.";
@@ -853,6 +864,6 @@ export default function WorkspacePage() {
   }
 
   return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1><p>{section === "apply" ? "A few details will help us understand your request." : "Review and manage information connected to your finance account."}</p></div></section>
-    {section === "loan-products" ? <LoanProductsWorkspace canCreate={user?.role === "ADMIN"} /> : section === "applications" && isAdmin ? <AdminApplicationsWorkspace /> : section === "kyc" && user?.role === "ADMIN" ? <AdminKycPage /> : section === "customers" && user?.role === "ADMIN" ? <CustomerDirectory /> : section === "users" && user?.role === "ADMIN" ? <AdminUsersPage /> : section === "apply" && !isAdmin ? <ApplyFinance user={user} /> : section === "profile" && !isAdmin ? <ProfilePage user={user} /> : section === "applications" && !isAdmin ? <DataWorkspace key={section} section={section} isAdmin={false} user={user} /> : <BackendCapabilityNotice title={title} />}
+    {section === "loan-products" ? <LoanProductsWorkspace canCreate={user?.role === "ADMIN"} /> : section === "applications" && isAdmin ? <AdminApplicationsWorkspace /> : section === "kyc" && user?.role === "ADMIN" ? <AdminKycPage /> : section === "customers" && user?.role === "ADMIN" ? <CustomerDirectory /> : section === "users" && user?.role === "ADMIN" ? <AdminUsersPage /> : section === "apply" && !isAdmin ? <ApplyFinance user={user} /> : section === "profile" && !isAdmin ? <ProfilePage user={user} /> : section === "applications" && !isAdmin ? <DataWorkspace key={section} section={section} isAdmin={false} user={user} /> : section === "notifications" ? <DataWorkspace key={section} section={section} isAdmin={isAdmin} user={user} /> : <BackendCapabilityNotice title={title} />}
   </div>;
 }

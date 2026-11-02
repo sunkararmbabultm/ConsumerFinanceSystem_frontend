@@ -5,6 +5,11 @@ export async function generateEmiSchedule(schedule) {
   return data;
 }
 
+export async function listAllSchedules() {
+  const { data } = await api.get("/api/emi/schedules");
+  return data;
+}
+
 export async function getLoanAccountForApplication(applicationId) {
   const { data } = await api.get(`/api/emi/schedules/application/${encodeURIComponent(applicationId)}`);
   return data;

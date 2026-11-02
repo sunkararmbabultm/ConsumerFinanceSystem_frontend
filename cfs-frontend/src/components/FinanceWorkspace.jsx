@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Eye, History, Plus, RefreshCw, Search, Send, X } from "lucide-react";
 import { createLoanProduct, getApplicationHistory, getFinanceApplication, getLoanProduct, listCustomerApplications, listLoanProducts, submitFinanceApplication } from "../services/financeApplicationService";
+import { notifyApplicationSubmitted } from "../services/notificationService";
 
 function records(data) {
   if (Array.isArray(data)) return data;
@@ -135,6 +136,7 @@ export function ApplicationDetails({ applicationId, canSubmit = false, onClose, 
     setActionError("");
     try {
       await submitFinanceApplication(applicationId);
+      notifyApplicationSubmitted({ customerId: application?.customerId, applicationId });
       setSubmitted(true);
       onSubmitted?.();
       refresh();

@@ -73,7 +73,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .sidebar-brand { min-height: 44px; padding: 0 8px; }
 .brand-name { white-space: nowrap; font-size: 14px; }
 .workspace-label { margin: 34px 9px 10px; color: var(--text-secondary); font-size: 9px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; }
-.side-nav { display: grid; gap: 4px; }
+.side-nav { flex: 1; min-height: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .nav-link { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 12px; padding: 0 11px; overflow: hidden; color: var(--text-secondary); border: 0; border-radius: var(--radius-sm); background: transparent; white-space: nowrap; text-align: left; font-size: 12px; font-weight: 620; cursor: pointer; }
 .nav-link svg { flex: 0 0 18px; }
 .nav-link:hover { color: var(--text-primary); background: var(--bg-secondary); }
@@ -195,6 +195,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .finance-details > div { min-width: 0; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
 .finance-details dt { color: var(--text-secondary); font-size: 11px; text-transform: capitalize; }
 .finance-details dd { margin: 4px 0 0; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.schedule-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 14px; }
+.schedule-card { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.schedule-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.schedule-card-head h3 { margin: 0; font-size: 13px; font-weight: 720; }
+.schedule-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 0; }
+.schedule-card dl > div { min-width: 0; }
+.schedule-card dt { color: var(--text-secondary); font-size: 10px; }
+.schedule-card dd { margin: 2px 0 0; font-size: 12px; font-weight: 620; overflow-wrap: anywhere; }
+.schedule-card .button { margin-top: auto; justify-content: center; }
 .finance-toolbar, .finance-lookup { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
 .finance-toolbar > .field, .finance-lookup > .field { flex: 1 1 150px; min-width: 0; }
 .finance-toolbar input, .finance-toolbar select { max-width: 100%; }
