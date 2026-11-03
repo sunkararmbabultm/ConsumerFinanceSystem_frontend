@@ -126,7 +126,7 @@ function GenerateScheduleDrawer({ onClose, onDone, onViewExisting }) {
   </DetailDialog>;
 }
 
-function PaymentDrawer({ loanAccountId, account, installment, onClose, onDone }) {
+function PaymentDrawer({ loanAccountId, account, installment, canNotify, onClose, onDone }) {
   const { installmentNumber } = installment;
   const amount = Number(installment.emiAmount);
   const [remarks, setRemarks] = useState(`EMI payment for installment ${installment.installmentNumber}`);
@@ -143,7 +143,7 @@ function PaymentDrawer({ loanAccountId, account, installment, onClose, onDone })
     setSaving(true);
     try {
       const repayment = await recordRepayment({ loanAccountId: Number(loanAccountId), emiId: installment.emiId, amount: Number(amount), paymentMethod: "SIMULATED", remarks: remarks.trim() });
-      notifyEmiPaymentSuccess({ customerId: account?.customerId, applicationId: account?.applicationId, repaymentId: repayment?.repaymentId, scheduleId: installment.emiId, amount });
+      if (canNotify) notifyEmiPaymentSuccess({ customerId: account?.customerId, applicationId: account?.applicationId, repaymentId: repayment?.repaymentId, scheduleId: installment.emiId, amount });
       onDone(`Payment recorded for installment ${installmentNumber}.`);
     } catch (failure) {
       setError(errorMessage(failure, "Unable to record the payment."));
@@ -246,7 +246,7 @@ export function EmiScheduleWorkspace({ user }) {
   return <div className="page-stack">
     {feedback && <div className="inline-message" role="status">{feedback}</div>}
     {showGenerate && <GenerateScheduleDrawer onClose={() => setShowGenerate(false)} onDone={(id) => { setShowGenerate(false); setFeedback(`EMI schedule generated for application ${id}.`); search(id); }} onViewExisting={(id) => { setShowGenerate(false); setFeedback(""); search(id); }} />}
-    {payTarget && <PaymentDrawer loanAccountId={loanAccountId} account={summary} installment={payTarget} onClose={() => setPayTarget(null)} onDone={(message) => { setPayTarget(null); setFeedback(message); search(String(summary?.applicationId)); }} />}
+    {payTarget && <PaymentDrawer loanAccountId={loanAccountId} account={summary} installment={payTarget} canNotify={user?.role === "ADMIN"} onClose={() => setPayTarget(null)} onDone={(message) => { setPayTarget(null); setFeedback(message); search(String(summary?.applicationId)); }} />}
     <section className="panel">
       <div className="panel-heading"><h2>{summary ? "Loan account" : canBrowseAll ? "All EMI schedules" : "Loan account"}</h2><div className="workspace-tools">
         {canBrowseAll && (summary || error) && <button className="button button-secondary small-button" type="button" onClick={backToList}><ArrowLeft size={14} /> All schedules</button>}

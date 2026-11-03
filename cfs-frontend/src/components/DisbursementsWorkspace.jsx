@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Eye, Plus, RefreshCw, Search, Wallet } from "lucide-react";
 import { DetailDialog } from "./FinanceWorkspace";
 import { createDisbursement, getDisbursement, getDisbursementForApplication, listDisbursements } from "../services/disbursementService";
-import { notifyLoanDisbursed } from "../services/notificationService";
 import { listWorkspaceApplications } from "../services/financeApplicationService";
 
 const isPositiveInteger = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -69,7 +68,6 @@ function CreateDisbursementDrawer({ onClose, onDone, onViewExisting }) {
     setSaving(true);
     try {
       const record = await createDisbursement({ applicationId, amount });
-      notifyLoanDisbursed({ customerId: record?.customerId, applicationId, approvalId: record?.approvalId, disbursementId: record?.disbursementId, amount });
       onDone(record);
     } catch (failure) {
       const status = failure.response?.status;

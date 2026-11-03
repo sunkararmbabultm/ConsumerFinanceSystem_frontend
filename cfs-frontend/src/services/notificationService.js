@@ -16,6 +16,11 @@ export async function listCustomerNotifications(customerId) {
   return data;
 }
 
+export async function markNotificationRead(notificationId) {
+  const { data } = await api.patch(`/api/notifications/${encodeURIComponent(notificationId)}/read`);
+  return data;
+}
+
 export async function getCustomerUnreadNotificationCount(customerId) {
   const { data } = await api.get(`/api/notifications/customer/${encodeURIComponent(customerId)}/unread-count`);
   return data;
@@ -33,11 +38,6 @@ export async function listNotifications() {
   return data;
 }
 
-export async function markNotificationRead(notificationId) {
-  const { data } = await api.patch(`/api/notifications/${encodeURIComponent(notificationId)}/read`);
-  return data;
-}
-
 function rupees(amount) {
   const value = Number(amount);
   return Number.isFinite(value) && value > 0
@@ -45,7 +45,6 @@ function rupees(amount) {
     : "";
 }
 
-// Looks up the application's customer when the caller does not already know it.
 async function resolveCustomerId(customerId, applicationId) {
   if (customerId != null) return Number(customerId);
   if (applicationId == null) return null;
@@ -56,7 +55,6 @@ async function resolveCustomerId(customerId, applicationId) {
   }
 }
 
-// Fire-and-forget: a notification failure must never break the main flow.
 async function sendNotificationSafely({ customerId, applicationId, ...rest }) {
   try {
     const resolvedCustomerId = await resolveCustomerId(customerId, applicationId);
@@ -67,8 +65,7 @@ async function sendNotificationSafely({ customerId, applicationId, ...rest }) {
       channel: "IN_APP",
       ...rest,
     });
-  } catch (error) {
-    console.warn("Unable to create notification", error);
+  } catch {
     return null;
   }
 }

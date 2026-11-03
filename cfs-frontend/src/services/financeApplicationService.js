@@ -21,8 +21,13 @@ export async function createDraftFinanceApplication(application) {
   return data;
 }
 
-export async function listApplications() {
-  const { data } = await api.get("/api/applications");
+export async function listAssessmentQueue() {
+  const { data } = await api.get("/api/applications/assessment-queue");
+  return data;
+}
+
+export async function getAssessmentContext(applicationId) {
+  const { data } = await api.get(`/api/applications/${encodeURIComponent(applicationId)}/assessment-context`);
   return data;
 }
 

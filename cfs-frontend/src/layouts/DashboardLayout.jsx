@@ -2,8 +2,8 @@ import { useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity, Bell, BriefcaseBusiness, ChevronDown, ChevronLeft,
-  ChevronRight, CircleDollarSign, ClipboardCheck, CreditCard, FileClock,
-  FileText, Gauge, Landmark, LogOut, Menu, Search, Settings, ShieldCheck,
+  ChevronRight, CircleDollarSign, ClipboardCheck, CreditCard,
+  FileText, Gauge, Landmark, LogOut, Menu, Search, ShieldCheck,
   UserRound, Users, UserRoundPlus, Wallet, X,
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
@@ -15,44 +15,33 @@ const customerLinks = [
   { label: "Apply for finance", path: "/customer/apply", icon: CircleDollarSign },
   { label: "Loan products", path: "/customer/loan-products", icon: Landmark },
   { label: "My applications", path: "/customer/applications", icon: FileText },
-  { label: "Disbursement", path: "/customer/disbursement", icon: Wallet },
   { label: "EMI schedule", path: "/customer/emi", icon: CreditCard },
   { label: "Repayment history", path: "/customer/repayments", icon: Activity },
   { label: "Notifications", path: "/customer/notifications", icon: Bell },
-  { label: "Settings", path: "/customer/settings", icon: Settings },
 ];
 
 const adminLinks = [
   { label: "Overview", path: "/admin", icon: Gauge, end: true },
   { label: "Loan products", path: "/admin/loan-products", icon: Landmark },
   { label: "Applications", path: "/admin/applications", icon: FileText },
-  { label: "Review queue", path: "/admin/review-queue", icon: ClipboardCheck },
   { label: "Customers", path: "/admin/customers", icon: Users },
   { label: "KYC review", path: "/admin/kyc", icon: ShieldCheck },
   { label: "Internal users", path: "/admin/users", icon: UserRoundPlus },
   { label: "Credit assessments", path: "/admin/assessments", icon: Activity },
   { label: "Approvals", path: "/admin/approvals", icon: ShieldCheck },
-  { label: "Disbursements", path: "/admin/disbursements", icon: Wallet },
-  { label: "EMI schedules", path: "/admin/emi", icon: CreditCard },
-  { label: "Repayments", path: "/admin/repayments", icon: FileClock },
+  { label: "Disbursements", path: "/admin/disbursement", icon: Wallet },
   { label: "Notifications", path: "/admin/notifications", icon: Bell },
-  { label: "Settings", path: "/admin/settings", icon: Settings },
 ];
 
 const roleLinks = {
   LOAN_OFFICER: [
     { label: "Overview", path: "/admin", icon: Gauge, end: true },
-    { label: "Applications", path: "/admin/applications", icon: FileText },
-    { label: "Review queue", path: "/admin/review-queue", icon: ClipboardCheck },
-    { label: "EMI schedules", path: "/admin/emi", icon: CreditCard },
-    { label: "Repayments", path: "/admin/repayments", icon: FileClock },
-    { label: "Notifications", path: "/admin/notifications", icon: Bell },
   ],
   CREDIT_ANALYST: [
     { label: "Overview", path: "/admin", icon: Gauge, end: true },
     { label: "Applications", path: "/admin/applications", icon: FileText },
     { label: "Credit assessments", path: "/admin/assessments", icon: Activity },
-    { label: "Notifications", path: "/admin/notifications", icon: Bell },
+    { label: "Approvals", path: "/admin/approvals", icon: ClipboardCheck },
   ],
   CREDIT_MANAGER: [
     { label: "Overview", path: "/admin", icon: Gauge, end: true },
@@ -60,7 +49,7 @@ const roleLinks = {
     { label: "Credit assessments", path: "/admin/assessments", icon: Activity },
     { label: "Decision queue", path: "/admin/decisions", icon: ShieldCheck },
     { label: "Approvals", path: "/admin/approvals", icon: ClipboardCheck },
-    { label: "Notifications", path: "/admin/notifications", icon: Bell },
+    { label: "Disbursements", path: "/admin/disbursement", icon: Wallet },
   ],
 };
 
@@ -121,7 +110,7 @@ export default function DashboardLayout() {
           </div>
           <div className="topbar-actions">
             <label className="top-search"><Search size={16} /><input aria-label="Search" placeholder="Search" /><kbd>⌘ K</kbd></label>
-            <button className="icon-button notification-button" onClick={() => navigate(`${workspaceBase}/notifications`)} aria-label="Notifications"><Bell size={18} /><span className="unread-dot" /></button>
+            {["CUSTOMER", "ADMIN"].includes(user?.role) && <button className="icon-button notification-button" onClick={() => navigate(`${workspaceBase}/notifications`)} aria-label="Notifications"><Bell size={18} /></button>}
             <ThemeToggle />
             <div className="profile-menu-wrap">
               <button className="profile-trigger" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}>
@@ -129,7 +118,7 @@ export default function DashboardLayout() {
                 <span className="profile-label"><strong>{user?.name || "Account"}</strong><small>{isAdmin ? user.role.replaceAll("_", " ") : "Customer"}</small></span>
                 <ChevronDown size={15} />
               </button>
-              {profileOpen && <div className="profile-dropdown"><span className="dropdown-email">{user?.email}</span><button onClick={() => navigate(`${workspaceBase}/${isAdmin ? "settings" : "profile"}`)}><UserRound size={16} /> {isAdmin ? "Workspace settings" : "My profile"}</button><button onClick={exit}><LogOut size={16} /> Sign out</button></div>}
+              {profileOpen && <div className="profile-dropdown"><span className="dropdown-email">{user?.email}</span>{!isAdmin && <button onClick={() => navigate(`${workspaceBase}/profile`)}><UserRound size={16} /> My profile</button>}<button onClick={exit}><LogOut size={16} /> Sign out</button></div>}
             </div>
           </div>
         </header>

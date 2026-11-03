@@ -1,22 +1,21 @@
 import { Fragment, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { ArrowRight, Check, ChevronLeft, ChevronRight, Eye, EyeOff, FileText, RefreshCw, Search, ShieldCheck, Users, X } from "lucide-react";
 import { useAuth } from "../context/useAuth";
-import { AdminApplicationsWorkspace, ApplicationDetails, DetailDialog, LoanProductsWorkspace, ProductDetails } from "../components/FinanceWorkspace";
+import { ApplicationDetails, DetailDialog, LoanProductsWorkspace, ProductDetails } from "../components/FinanceWorkspace";
 import ApprovalsWorkspace from "../components/ApprovalsWorkspace";
-import DisbursementsWorkspace from "../components/DisbursementsWorkspace";
-import { EmiScheduleWorkspace, RepaymentHistoryWorkspace } from "../components/EmiWorkspace";
-import CreditAssessmentsWorkspace from "../components/CreditAssessmentsWorkspace";
+import CreditAssessmentsWorkspace, { StaffApplicationQueueWorkspace } from "../components/CreditAssessmentsWorkspace";
+import { AdminNotificationWorkspace, CustomerEmiWorkspace, CustomerNotificationsWorkspace, CustomerRepaymentsWorkspace, DisbursementsWorkspace } from "../components/LoanServicingWorkspaces";
 import { createApproval } from "../services/approvalService";
 import { getAssessmentForApplication } from "../services/creditAssessmentService";
 import { createInternalUser } from "../services/authService";
-import { createCustomer, createCustomerAddress, createCustomerBankAccount, createCustomerDocument, createCustomerEmployment, getCustomerByUserId, getCustomerAddresses, getCustomerEmployment, getCustomerBankAccounts, getCustomerDocuments, getCustomerOnboardingStatus, updateKycStatus } from "../services/customerService";
+import { createCustomer, createCustomerAddress, createCustomerBankAccount, createCustomerDocument, createCustomerEmployment, getCustomerByUserId, getCustomerAddresses, getCustomerEmployment, getCustomerBankAccounts, getCustomerDocuments, getCustomerOnboardingStatus, requestCustomerKycReview } from "../services/customerService";
 import { createDraftFinanceApplication, listLoanProducts, listWorkspaceApplications, submitFinanceApplication } from "../services/financeApplicationService";
-import { listCustomerNotifications, listNotifications, markNotificationRead as updateNotificationRead, notifyApplicationSubmitted } from "../services/notificationService";
+import { markNotificationRead as updateNotificationRead } from "../services/notificationService";
 import { getAdminKycDetails, listAdminKycRecords, rejectCustomerKyc, verifyCustomerKyc } from "../services/kycService";
 
 const titles = {
-  profile: "My profile", apply: "Apply for finance", applications: "My applications", disbursement: "Disbursement", disbursements: "Disbursements",
+  profile: "My profile", apply: "Apply for finance", applications: "My applications", disbursement: "Disbursement",
   emi: "EMI schedule", repayments: "Repayment history", notifications: "Notifications", settings: "Settings",
   "review-queue": "Finance application review", customers: "Customers", approvals: "Approval history", users: "Internal users",
   assessments: "Credit assessments", decisions: "Decision queue", kyc: "KYC review", "loan-products": "Loan products",
@@ -42,7 +41,7 @@ function getValue(record, keys) {
   return "—";
 }
 
-async function toApprovalRequest(application, status, remarks) {
+async function toApprovalRequest(application, decision, remarks, reviewedBy) {
   const applicationId = application.applicationId ?? application.id;
   if (!applicationId) {
     throw new Error("An application ID is required to record a decision.");
@@ -52,11 +51,15 @@ async function toApprovalRequest(application, status, remarks) {
   if (!creditAssessmentId) {
     throw new Error("A credit assessment is required before recording a decision.");
   }
+  if (!reviewedBy?.trim()) {
+    throw new Error("Your signed-in account does not include a reviewer email.");
+  }
   return {
     applicationId,
     creditAssessmentId,
-    status,
-    remarks: remarks.trim(),
+    decision,
+    reviewedBy: reviewedBy.trim(),
+    remarks: remarks.trim() || undefined,
   };
 }
 
@@ -73,7 +76,7 @@ function DataWorkspace({ section, isAdmin, user }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState("");
 
-  const hasService = (section === "applications" && !isAdmin) || section === "notifications";
+  const hasService = section === "applications" && !isAdmin;
   const [loading, setLoading] = useState(hasService);
   const [retryCount, setRetryCount] = useState(0);
 
@@ -82,17 +85,7 @@ function DataWorkspace({ section, isAdmin, user }) {
     let current = true;
     async function fetchRecords() {
       try {
-        let response;
-        if (section === "notifications") {
-          if (isAdmin) {
-            response = await listNotifications();
-          } else {
-            const customer = await getCustomerByUserId(user?.id);
-            response = await listCustomerNotifications(customer.customerId);
-          }
-        } else {
-          response = await listWorkspaceApplications(false, user?.id);
-        }
+        const response = await listWorkspaceApplications(false, user?.id);
         if (current) setData(unwrap(response));
       } catch {
         if (current) setError(`Unable to load ${titles[section]?.toLowerCase() || "this information"}.`);
@@ -133,7 +126,7 @@ function DataWorkspace({ section, isAdmin, user }) {
     setActionLoading(true);
     setActionError("");
     try {
-      const approval = await toApprovalRequest(selectedApplication, decision, decisionReason);
+      const approval = await toApprovalRequest(selectedApplication, decision, decisionReason, user?.email);
       await createApproval(approval);
       const selectedId = selectedApplication.applicationId || selectedApplication.id;
       setData((current) => current.filter((record) => (record.applicationId || record.id) !== selectedId));
@@ -141,7 +134,7 @@ function DataWorkspace({ section, isAdmin, user }) {
       setSelectedApplication(null);
       setDecisionReason("");
     } catch (requestError) {
-      setActionError(requestError.response?.data?.message || requestError.message || "The decision could not be recorded. Please try again.");
+      setActionError(kycRequestError(requestError, "The decision could not be recorded. Please try again."));
     } finally {
       setActionLoading(false);
     }
@@ -268,7 +261,6 @@ function ApplyFinance({ user }) {
     try {
       draft = await createDraftFinanceApplication(requestPayload());
       const submitted = await submitFinanceApplication(draft.applicationId);
-      notifyApplicationSubmitted({ customerId: Number(customerId), applicationId: draft.applicationId });
       setResult({ id: submitted?.applicationNumber || draft?.applicationNumber || submitted?.applicationId || draft?.applicationId || "—", status: "SUBMITTED" });
     } catch (requestError) {
       const detail = requestError.response?.data?.message || "Please try again.";
@@ -417,15 +409,24 @@ function ProfilePage({ user }) {
     setError("");
     setMessage("");
     try {
-      await action();
-      if (sectionName === "Document metadata") {
+      const response = await action();
+      if (sectionName === "KYC review") {
+        const kycStatus = response?.kycStatus || "UNDER_REVIEW";
+        setProfile((current) => current ? {
+          ...current,
+          kycStatus,
+          onboardingStatus: response?.onboardingStatus || current.onboardingStatus,
+        } : current);
+        setMessage(`KYC status: ${String(kycStatus).replaceAll("_", " ")}. Your profile and onboarding status have been refreshed.`);
+        setActiveStep(5);
+      } else if (sectionName === "Document metadata") {
         const nextDocument = requiredDocumentTypes.find((type) => type !== documentForm.documentType && !profile?.documentTypes?.includes(type));
         setMessage(`${documentForm.documentType.replaceAll("_", " ")} metadata saved. ${nextDocument ? "Select the next required document to continue." : "Checking required document records…"} File contents are not uploaded by this API.`);
         setActiveStep(3);
         setDocumentInputKey((key) => key + 1);
       } else {
         setMessage(`${sectionName} saved successfully.`);
-        const stepBySection = { Address: 0, "Employment details": 1, "Bank account": 2, "KYC review": 4 };
+        const stepBySection = { Address: 0, "Employment details": 1, "Bank account": 2 };
         setActiveStep(Math.min((stepBySection[sectionName] ?? activeStep) + 1, 5));
       }
       setRetryCount((count) => count + 1);
@@ -524,7 +525,7 @@ function ProfilePage({ user }) {
             </form>
           </>}
 
-          {activeStep === 4 && (kycSubmitted ? <div className={`saved-step-details${kycComplete ? "" : " pending-review"}`}><strong>KYC {String(profile.kycStatus).replaceAll("_", " ")}</strong><span>{kycComplete ? "Verification completed." : "Pending verification by the customer service."}</span></div> : <div className="kyc-review-action"><p>Submit your onboarding information for review. Verification is performed by the service, not by this form.</p><button className="button button-primary" type="button" disabled={Boolean(saving)} onClick={() => saveOnboardingSection("KYC review", () => updateKycStatus(customerId, "UNDER_REVIEW", "Customer requested KYC review."))}>{saving === "KYC review" ? "Submitting review…" : "Request KYC review"}</button></div>)}
+          {activeStep === 4 && (kycSubmitted ? <div className={`saved-step-details${kycComplete ? "" : " pending-review"}`}><strong>KYC {String(profile.kycStatus).replaceAll("_", " ")}</strong><span>{kycComplete ? "Verification completed." : "Pending verification by the service."}</span></div> : <div className="kyc-review-action"><p>Submit your onboarding information for review. Verification is performed by the service, not by this form.</p><button className="button button-primary" type="button" disabled={Boolean(saving)} onClick={() => saveOnboardingSection("KYC review", () => requestCustomerKycReview(customerId))}>{saving === "KYC review" ? "Submitting review…" : "Request KYC review"}</button></div>)}
         </section>}
       </section>
     </>}
@@ -540,11 +541,26 @@ function getKycRecords(payload) {
 }
 
 function kycRequestError(requestError, fallback) {
-  if (requestError.response?.status === 403) {
-    return "Forbidden (403): this endpoint requires ROLE_ADMIN. Sign in with an admin account. If this session already has ROLE_ADMIN, check the API Gateway/service authorization rule for /api/admin/kyc/**.";
+  const status = requestError.response?.status;
+  const body = requestError.response?.data && typeof requestError.response.data === "object" ? requestError.response.data : {};
+  const readiness = [body.missingSections, body.missingDocumentTypes]
+    .flatMap((items) => Array.isArray(items) ? items : [])
+    .map((item) => String(item).replaceAll("_", " ").toLowerCase());
+  const message = typeof body.message === "string" && body.message.length <= 400
+    && !/(\n\s*at\s|Exception:|Error:)/.test(body.message) ? body.message : "";
+
+  if (status === 400 && readiness.length) return `Complete the required onboarding items before requesting review: ${readiness.join(", ")}.`;
+  if (status === 400) {
+    const errors = body.validationErrors || body.errors;
+    const validation = errors && typeof errors === "object" ? Object.values(errors).filter(Boolean).join(" ") : "";
+    return validation ? `Validation failed: ${validation}` : message || "The KYC request is invalid. Check the required onboarding details.";
   }
-  if (requestError.response?.status === 401) return "Your session has expired. Sign in again to review KYC.";
-  return requestError.response?.data?.message || fallback;
+  if (status === 401) return "Your session has expired. Sign in again.";
+  if (status === 403) return "You do not have permission to perform this KYC action.";
+  if (status === 404) return "The customer KYC record was not found. Refresh and try again.";
+  if (status === 409) return message || "The KYC action conflicts with the current review status. Refresh the profile.";
+  if (status === 502 || status === 503) return "The customer service is temporarily unavailable. Try again shortly.";
+  return fallback;
 }
 
 function maskPan(panNumber) {
@@ -803,7 +819,7 @@ function AdminUsersPage() {
 
   return <div className="admin-user-layout">
     <section className="panel admin-user-panel">
-      <div className="panel-heading"><div><h2>Create internal user</h2><p>Create an administrator or loan officer account.</p></div></div>
+      <div className="panel-heading"><div><h2>Create internal user</h2><p>Create an internal staff account and assign its role.</p></div></div>
       {error && <div className="form-alert error" role="alert">{error}</div>}
       {created && <div className="form-alert success" role="status">{created.message || "Internal user created successfully."} {created.userId ? `User ID: ${created.userId}.` : ""} {Array.isArray(created.roles) ? `Assigned role: ${created.roles.join(", ")}.` : ""}</div>}
       <form className="form-grid two-columns" onSubmit={submit}>
@@ -825,26 +841,39 @@ export default function WorkspacePage() {
   const isAdmin = user?.role !== "CUSTOMER";
   const title = titles[section] || "Finance workspace";
 
-  if (section === "disbursement" || section === "disbursements") {
-    return <div className="page-stack page-enter">
-      <section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1></div></section>
-      <DisbursementsWorkspace key={user?.id} user={user} />
-    </div>;
+  if (section === "review-queue") {
+    return <Navigate to={user?.role === "LOAN_OFFICER" ? "/admin" : "/admin/applications"} replace />;
+  }
+
+  if (section === "settings") {
+    return <Navigate to={user?.role === "CUSTOMER" ? "/customer" : "/admin"} replace />;
+  }
+
+  if (["apply", "profile", "emi", "kyc", "users"].includes(section)) {
+    const customerOnly = ["apply", "profile", "emi"].includes(section);
+    const adminOnly = ["kyc", "users"].includes(section);
+    if ((customerOnly && user?.role !== "CUSTOMER") || (adminOnly && user?.role !== "ADMIN")) {
+      return <Navigate to={user?.role === "CUSTOMER" ? "/customer" : "/admin"} replace />;
+    }
+  }
+
+  if (section === "repayments" && isAdmin) {
+    return <Navigate to="/admin" replace />;
   }
 
   if (section === "assessments") {
     const canAssess = ["ADMIN", "CREDIT_ANALYST", "CREDIT_MANAGER"].includes(user?.role);
     return <div className="page-stack page-enter">
       <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1></div></section>
-      {canAssess ? <CreditAssessmentsWorkspace /> : <div className="inline-error" role="alert">Only administrators, credit analysts, and credit managers can access credit assessments.</div>}
+      {canAssess ? <CreditAssessmentsWorkspace userRole={user?.role} /> : <div className="inline-error" role="alert">Only administrators, credit analysts, and credit managers can access credit assessments.</div>}
     </div>;
   }
 
-  if (section === "emi" || section === "repayments") {
-    const canView = ["CUSTOMER", "ADMIN", "LOAN_OFFICER"].includes(user?.role);
+  if (section === "applications" && isAdmin) {
+    const canViewQueue = ["ADMIN", "CREDIT_ANALYST", "CREDIT_MANAGER"].includes(user?.role);
     return <div className="page-stack page-enter">
-      <section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1></div></section>
-      {!canView ? <div className="inline-error" role="alert">You do not have access to EMI and repayment records.</div> : section === "emi" ? <EmiScheduleWorkspace user={user} /> : <RepaymentHistoryWorkspace user={user} />}
+      <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>Submitted applications</h1></div></section>
+      {canViewQueue ? <StaffApplicationQueueWorkspace userRole={user.role} /> : <div className="inline-error" role="alert">Your role cannot access the submitted application queue.</div>}
     </div>;
   }
 
@@ -856,14 +885,46 @@ export default function WorkspacePage() {
   }
 
   if (section === "approvals") {
-    const canReview = ["ADMIN", "CREDIT_MANAGER"].includes(user?.role);
+    const canView = ["ADMIN", "CREDIT_MANAGER", "CREDIT_ANALYST"].includes(user?.role);
+    const canCreate = ["ADMIN", "CREDIT_MANAGER"].includes(user?.role);
     return <div className="page-stack page-enter">
-      <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1><p>Record and review application decisions.</p></div></section>
-      {canReview ? <ApprovalsWorkspace isAdmin={user.role === "ADMIN"} /> : <div className="inline-error" role="alert">Only administrators and credit managers can access approvals.</div>}
+      <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1><p>{canCreate ? "Review decisions and assess eligible records without an existing decision." : "Read-only approval history."}</p></div></section>
+      {canView ? <ApprovalsWorkspace isAdmin={user.role === "ADMIN"} canCreate={canCreate} reviewerEmail={user.email} /> : <div className="inline-error" role="alert">Your role cannot access approval history.</div>}
     </div>;
   }
 
+  if (section === "decisions") {
+    const canView = ["ADMIN", "CREDIT_MANAGER"].includes(user?.role);
+    return <div className="page-stack page-enter">
+      <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1><p>Eligible assessments without an approval decision.</p></div></section>
+      {canView ? <ApprovalsWorkspace isAdmin={user.role === "ADMIN"} canCreate={canView} reviewerEmail={user.email} queueOnly /> : <div className="inline-error" role="alert">Only administrators and credit managers can access the decision queue.</div>}
+    </div>;
+  }
+
+  if (section === "disbursement") {
+    if (user?.role === "CUSTOMER") return <Navigate to="/customer" replace />;
+    const canManage = ["ADMIN", "CREDIT_MANAGER"].includes(user?.role);
+    return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">LOAN SERVICING</p><h1>{title}</h1></div></section>
+      {canManage ? <DisbursementsWorkspace canManage={canManage} /> : <div className="inline-error" role="alert">Only administrators and credit managers can access disbursements.</div>}
+    </div>;
+  }
+
+  if (section === "notifications" && user?.role === "ADMIN") {
+    return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1></div></section><AdminNotificationWorkspace /></div>;
+  }
+
+  if (["emi", "repayments", "notifications"].includes(section) && user?.role === "CUSTOMER") {
+    const workspace = section === "emi" ? <CustomerEmiWorkspace user={user} />
+      : section === "repayments" ? <CustomerRepaymentsWorkspace user={user} />
+        : <CustomerNotificationsWorkspace user={user} />;
+    return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">CUSTOMER ACCOUNT</p><h1>{title}</h1></div></section>{workspace}</div>;
+  }
+
+  if (section === "notifications" && user?.role !== "ADMIN") {
+    return <Navigate to="/admin" replace />;
+  }
+
   return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">{isAdmin ? "ADMINISTRATION" : "CUSTOMER ACCOUNT"}</p><h1>{title}</h1><p>{section === "apply" ? "A few details will help us understand your request." : "Review and manage information connected to your finance account."}</p></div></section>
-    {section === "loan-products" ? <LoanProductsWorkspace canCreate={user?.role === "ADMIN"} /> : section === "applications" && isAdmin ? <AdminApplicationsWorkspace /> : section === "kyc" && user?.role === "ADMIN" ? <AdminKycPage /> : section === "customers" && user?.role === "ADMIN" ? <CustomerDirectory /> : section === "users" && user?.role === "ADMIN" ? <AdminUsersPage /> : section === "apply" && !isAdmin ? <ApplyFinance user={user} /> : section === "profile" && !isAdmin ? <ProfilePage user={user} /> : section === "applications" && !isAdmin ? <DataWorkspace key={section} section={section} isAdmin={false} user={user} /> : section === "notifications" ? <DataWorkspace key={section} section={section} isAdmin={isAdmin} user={user} /> : <BackendCapabilityNotice title={title} />}
+    {section === "loan-products" ? <LoanProductsWorkspace canCreate={user?.role === "ADMIN"} /> : section === "kyc" && user?.role === "ADMIN" ? <AdminKycPage /> : section === "customers" && user?.role === "ADMIN" ? <CustomerDirectory /> : section === "users" && user?.role === "ADMIN" ? <AdminUsersPage /> : section === "apply" && !isAdmin ? <ApplyFinance user={user} /> : section === "profile" && !isAdmin ? <ProfilePage user={user} /> : section === "applications" && !isAdmin ? <DataWorkspace key={section} section={section} isAdmin={false} user={user} /> : <BackendCapabilityNotice title={title} />}
   </div>;
 }

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Check, ClipboardCheck, Eye, Plus, RefreshCw, X } from "lucide-react";
+import { Check, ClipboardCheck, Eye, RefreshCw, X } from "lucide-react";
 import { DetailDialog } from "./FinanceWorkspace";
-import { createApproval, getApproval, getApprovalForApplication, getApprovalReview, listApprovals, listApprovalsByReviewer, listApprovalsByStatus, listPendingApprovals } from "../services/approvalService";
-import { notifyApplicationDecision } from "../services/notificationService";
+import { createApproval, getApproval, getApprovalForApplication, listApprovals, listApprovalsByReviewer, listApprovalsByStatus } from "../services/approvalService";
+import { getAssessmentForApplication, listCreditAssessments } from "../services/creditAssessmentService";
 
 function records(response) {
   if (Array.isArray(response)) return response;
-  for (const key of ["content", "data", "approvals", "items"]) {
+  for (const key of ["content", "data", "approvals", "assessments", "items"]) {
     if (Array.isArray(response?.[key])) return response[key];
   }
   if (response && typeof response === "object" && response.approvalId != null) return [response];
@@ -14,7 +14,23 @@ function records(response) {
 }
 
 function errorMessage(error, fallback) {
-  return error.response?.data?.message || error.message || fallback;
+  const status = error.response?.status;
+  const body = error.response?.data && typeof error.response.data === "object" ? error.response.data : {};
+  const serverMessage = typeof body.message === "string" && body.message.length <= 400
+    && !/(\n\s*at\s|Exception:|Error:)/.test(body.message) ? body.message : "";
+
+  if (status === 400) {
+    const errors = body.validationErrors || body.errors;
+    const validation = errors && typeof errors === "object" ? Object.values(errors).filter(Boolean).join(" ") : "";
+    return validation ? `Validation failed: ${validation}` : serverMessage || "The approval request is invalid. Check the IDs and decision.";
+  }
+  if (status === 401) return "Your session has expired. Sign in again.";
+  if (status === 403) return "You do not have permission to access or change approval records.";
+  if (status === 404) return "The requested application, assessment, or approval was not found.";
+  if (status === 409) return serverMessage || "An approval already exists or the decision conflicts with the current workflow.";
+  if (status === 502 || status === 503) return "The approval or assessment service is temporarily unavailable. Try again shortly.";
+  if (!status && typeof error.message === "string" && error.message.length <= 300) return error.message;
+  return fallback;
 }
 
 function ApprovalDetails({ approval, onClose }) {
@@ -49,21 +65,35 @@ function ApprovalDetails({ approval, onClose }) {
   </DetailDialog>;
 }
 
-function ReviewDrawer({ pending, onClose, onDone }) {
+function ReviewDrawer({ pending, reviewerEmail, onClose, onDone }) {
   const [review, setReview] = useState(null);
+  const [alreadyDecided, setAlreadyDecided] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const eligible = pending.assessmentStatus === "ELIGIBLE";
-  const [decision, setDecision] = useState(eligible ? "APPROVED" : "REJECTED");
+  const [decision, setDecision] = useState("APPROVED");
   const [remarks, setRemarks] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     let current = true;
-    getApprovalReview(pending.applicationId)
-      .then((response) => { if (current) setReview(response); })
+    Promise.all([
+      getAssessmentForApplication(pending.applicationId),
+      getApprovalForApplication(pending.applicationId).catch((failure) => {
+        if (failure.response?.status === 404) return null;
+        throw failure;
+      }),
+    ])
+      .then(([assessment, existingApproval]) => {
+        if (!current) return;
+        if (assessment?.status !== "ELIGIBLE") {
+          setError("This application no longer has an eligible assessment. Refresh the approval list.");
+          return;
+        }
+        setReview(assessment);
+        setAlreadyDecided(Boolean(existingApproval));
+      })
       .catch((failure) => { if (current) setError(errorMessage(failure, "Unable to load the credit assessment.")); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
@@ -72,14 +102,23 @@ function ReviewDrawer({ pending, onClose, onDone }) {
   async function submit(event) {
     event.preventDefault();
     setSaveError("");
-    if (!remarks.trim()) {
-      setSaveError(`Enter a reason to ${decision === "APPROVED" ? "approve" : "reject"} this application.`);
+    if (!reviewerEmail?.trim()) {
+      setSaveError("Your signed-in account does not include a reviewer email.");
+      return;
+    }
+    if (!review?.creditAssessmentId) {
+      setSaveError("The credit assessment ID is unavailable. Refresh the approval list.");
       return;
     }
     setSaving(true);
     try {
-      const approval = await createApproval({ applicationId: Number(pending.applicationId), creditAssessmentId: Number(review?.creditAssessmentId ?? pending.creditAssessmentId), status: decision, remarks: remarks.trim() });
-      notifyApplicationDecision({ customerId: pending.customerId ?? review?.customerId ?? approval?.customerId, applicationId: Number(pending.applicationId), approvalId: approval?.approvalId, approved: decision === "APPROVED" });
+      await createApproval({
+        applicationId: Number(pending.applicationId),
+        creditAssessmentId: Number(review.creditAssessmentId),
+        decision,
+        reviewedBy: reviewerEmail.trim(),
+        remarks: remarks.trim() || undefined,
+      });
       onDone(`Application ${pending.applicationId} ${decision.toLowerCase()} successfully.`);
     } catch (failure) {
       setSaveError(errorMessage(failure, "Unable to record the decision."));
@@ -93,19 +132,21 @@ function ReviewDrawer({ pending, onClose, onDone }) {
     {loading ? <p role="status">Loading credit assessment...</p> : error ? <div className="inline-error" role="alert">{error}<button className="button button-secondary small-button" type="button" onClick={() => { setError(""); setLoading(true); setAttempt((value) => value + 1); }}>Retry</button></div> : <dl className="finance-details">
       {Object.entries(review ?? {}).map(([key, value]) => <div key={key}><dt>{key.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{value == null ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value)}</dd></div>)}
     </dl>}
-    {!loading && !error && <form className="form-grid" onSubmit={submit}>
+    {!loading && alreadyDecided && <div className="inline-error" role="alert">A decision already exists for this application. Refresh the approval list.</div>}
+    {!loading && !error && !alreadyDecided && <form className="form-grid" onSubmit={submit}>
       {saveError && <div className="inline-error" role="alert">{saveError}</div>}
-      <label className="field"><span>Decision</span><select value={decision} onChange={(event) => setDecision(event.target.value)} disabled={saving}><option value="APPROVED" disabled={!eligible}>Approve</option><option value="REJECTED">Reject</option></select></label>
-      <label className="field"><span>Reason for {approving ? "approval" : "rejection"}</span><textarea rows="4" required value={remarks} onChange={(event) => setRemarks(event.target.value)} disabled={saving} /></label>
+      {!reviewerEmail && <div className="inline-error" role="alert">Your signed-in account does not include a reviewer email.</div>}
+      <label className="field"><span>Decision</span><select value={decision} onChange={(event) => setDecision(event.target.value)} disabled={saving}><option value="APPROVED">Approve</option><option value="REJECTED">Reject</option></select></label>
+      <label className="field"><span>Remarks (optional)</span><textarea rows="4" maxLength="500" value={remarks} onChange={(event) => setRemarks(event.target.value)} disabled={saving} /></label>
       <div className="finance-actions">
         <button className="button button-secondary" type="button" onClick={onClose} disabled={saving}>Cancel</button>
-        <button className={`button ${approving ? "button-primary" : "button-danger"}`} type="submit" disabled={saving}>{approving ? <Check size={16} /> : <X size={16} />}{saving ? "Submitting..." : approving ? "Approve" : "Reject"}</button>
+        <button className={`button ${approving ? "button-primary" : "button-danger"}`} type="submit" disabled={saving || !reviewerEmail?.trim()}>{approving ? <Check size={16} /> : <X size={16} />}{saving ? "Submitting..." : approving ? "Approve" : "Reject"}</button>
       </div>
     </form>}
   </DetailDialog>;
 }
 
-export default function ApprovalsWorkspace({ isAdmin }) {
+export default function ApprovalsWorkspace({ isAdmin, canCreate = false, reviewerEmail = "", queueOnly = false }) {
   const [pending, setPending] = useState([]);
   const [pendingLoading, setPendingLoading] = useState(true);
   const [pendingError, setPendingError] = useState("");
@@ -118,12 +159,8 @@ export default function ApprovalsWorkspace({ isAdmin }) {
   const [attempt, setAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ applicationId: "", creditAssessmentId: "", status: "APPROVED", remarks: "" });
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [selectedApproval, setSelectedApproval] = useState(null);
-  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -162,10 +199,12 @@ export default function ApprovalsWorkspace({ isAdmin }) {
 
   useEffect(() => {
     let current = true;
-    listPendingApprovals()
-      .then((response) => {
-        if (!Array.isArray(response)) throw new Error("The approval service returned an unexpected pending list.");
-        if (current) setPending(response);
+    Promise.all([listCreditAssessments(), listApprovals()])
+      .then(([assessmentResponse, approvalResponse]) => {
+        const assessments = records(assessmentResponse);
+        const decisions = records(approvalResponse);
+        const decidedApplications = new Set(decisions.map((item) => String(item.applicationId)));
+        if (current) setPending(assessments.filter((item) => item.status === "ELIGIBLE" && !decidedApplications.has(String(item.applicationId))));
       })
       .catch((failure) => { if (current) setPendingError(errorMessage(failure, "Unable to load pending applications.")); })
       .finally(() => { if (current) setPendingLoading(false); });
@@ -198,70 +237,26 @@ export default function ApprovalsWorkspace({ isAdmin }) {
     setRequest({ filter, value: lookup.trim() });
   }
 
-  function change(event) {
-    setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
-  }
-
-  async function submit(event) {
-    event.preventDefault();
-    setSaveError("");
-    setFeedback("");
-    const applicationId = Number(form.applicationId);
-    const creditAssessmentId = Number(form.creditAssessmentId);
-    if (!Number.isSafeInteger(applicationId) || applicationId <= 0 || !Number.isSafeInteger(creditAssessmentId) || creditAssessmentId <= 0) {
-      setSaveError("Application ID and credit assessment ID must be positive whole numbers.");
-      return;
-    }
-    if (form.status === "REJECTED" && !form.remarks.trim()) {
-      setSaveError("Remarks are required when rejecting an application.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const approval = await createApproval({ applicationId, creditAssessmentId, status: form.status, remarks: form.remarks.trim() });
-      notifyApplicationDecision({ customerId: approval?.customerId, applicationId, approvalId: approval?.approvalId, approved: form.status === "APPROVED" });
-      setFeedback(`Application ${applicationId} ${form.status.toLowerCase()} successfully.`);
-      setForm({ applicationId: "", creditAssessmentId: "", status: "APPROVED", remarks: "" });
-      setShowCreate(false);
-      refreshPending();
-      refresh();
-    } catch (failure) {
-      setSaveError(errorMessage(failure, "Unable to record the decision."));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   const needsLookup = ["APPROVAL_ID", "APPLICATION_ID", "REVIEWER"].includes(filter);
   const lookupLabel = filter === "REVIEWER" ? "Reviewer email" : filter === "APPLICATION_ID" ? "Application ID" : "Approval ID";
+  const canRecord = canCreate && Boolean(reviewerEmail?.trim());
 
   return <div className="page-stack">
     {feedback && <div className="inline-message" role="status">{feedback}</div>}
-    {showCreate && <DetailDialog title="Record an approval decision" drawer onClose={() => { if (!saving) setShowCreate(false); }}>
-      <p>Enter the application and its credit assessment to approve or reject it.</p>
-      {saveError && <div className="inline-error" role="alert">{saveError}</div>}
-      <form className="form-grid two-columns" onSubmit={submit}>
-        <label className="field"><span>Application ID</span><input name="applicationId" type="number" min="1" step="1" required value={form.applicationId} onChange={change} disabled={saving} /></label>
-        <label className="field"><span>Credit assessment ID</span><input name="creditAssessmentId" type="number" min="1" step="1" required value={form.creditAssessmentId} onChange={change} disabled={saving} /></label>
-        <label className="field"><span>Decision</span><select name="status" value={form.status} onChange={change} disabled={saving}><option value="APPROVED">Approve</option><option value="REJECTED">Reject</option></select></label>
-        <label className="field field-wide"><span>Remarks (required to reject)</span><textarea name="remarks" rows="3" required={form.status === "REJECTED"} value={form.remarks} onChange={change} disabled={saving} /></label>
-        <div className="field-wide"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving decision..." : "Submit decision"}</button></div>
-      </form>
-    </DetailDialog>}
     {selectedApproval && <ApprovalDetails approval={selectedApproval} onClose={() => setSelectedApproval(null)} />}
-    {reviewTarget && <ReviewDrawer key={reviewTarget.applicationId} pending={reviewTarget} onClose={() => setReviewTarget(null)} onDone={reviewDone} />}
+    {reviewTarget && canRecord && <ReviewDrawer key={reviewTarget.applicationId} pending={reviewTarget} reviewerEmail={reviewerEmail} onClose={() => setReviewTarget(null)} onDone={reviewDone} />}
     <section className="panel">
       <div className="panel-heading"><h2>Pending approvals</h2><div className="workspace-tools"><button className="icon-button" type="button" aria-label="Refresh pending approvals" title="Refresh pending approvals" disabled={pendingLoading} onClick={refreshPending}><RefreshCw size={17} /></button></div></div>
-      {pendingLoading ? <p role="status">Loading pending applications...</p> : pendingError ? <div className="inline-error" role="alert">{pendingError}<button className="button button-secondary small-button" type="button" onClick={refreshPending}>Retry</button></div> : pending.length === 0 ? <p>No applications are awaiting approval.</p> : <div className="table-wrap"><table>
-        <thead><tr><th>Application ID</th><th>Assessment ID</th><th>Assessment status</th><th>Assessment reason</th><th>Assessed by</th><th>Action</th></tr></thead>
+      {pendingLoading ? <p role="status">Loading eligible assessments...</p> : pendingError ? <div className="inline-error" role="alert">{pendingError}<button className="button button-secondary small-button" type="button" onClick={refreshPending}>Retry</button></div> : pending.length === 0 ? <p>No eligible assessments without an approval decision.</p> : <div className="table-wrap"><table>
+        <thead><tr><th>Application ID</th><th>Assessment ID</th><th>Assessment status</th><th>Assessment reason</th><th>Assessed by</th>{canRecord && <th>Action</th>}</tr></thead>
         <tbody>{pending.map((item) => <tr key={item.applicationId}>
-          <td>{item.applicationId}</td><td>{item.creditAssessmentId ?? "-"}</td><td><span className="status-badge">{item.assessmentStatus?.replaceAll("_", " ") ?? "-"}</span></td><td>{item.assessmentReason ?? "-"}</td><td>{item.assessedBy ?? "-"}</td>
-          <td><button className="button button-primary small-button" type="button" onClick={() => { setFeedback(""); setReviewTarget(item); }}><ClipboardCheck size={14} /> Review</button></td>
+          <td>{item.applicationId}</td><td>{item.creditAssessmentId ?? "-"}</td><td><span className="status-badge">{item.status?.replaceAll("_", " ") ?? "-"}</span></td><td>{item.reason ?? "-"}</td><td>{item.assessedBy ?? "-"}</td>
+          {canRecord && <td><button className="button button-primary small-button" type="button" onClick={() => { setFeedback(""); setReviewTarget(item); }}><ClipboardCheck size={14} /> Review</button></td>}
         </tr>)}</tbody>
       </table></div>}
     </section>
-    <section className="panel">
-      <div className="panel-heading"><h2>Approval history</h2><div className="workspace-tools"><button className="button button-primary small-button" type="button" onClick={() => { setSaveError(""); setFeedback(""); setShowCreate(true); }}><Plus size={16} /> Record decision</button><button className="icon-button" type="button" aria-label="Refresh approvals" title="Refresh approvals" disabled={loading} onClick={refresh}><RefreshCw size={17} /></button></div></div>
+    {!queueOnly && <section className="panel">
+      <div className="panel-heading"><div><h2>Approval history</h2>{canCreate && !canRecord && <p>Decision creation is unavailable because the signed-in account has no email.</p>}</div><div className="workspace-tools"><button className="icon-button" type="button" aria-label="Refresh approvals" title="Refresh approvals" disabled={loading} onClick={refresh}><RefreshCw size={17} /></button></div></div>
       <form className="finance-toolbar" onSubmit={search}>
         <label className="field"><span>Find decisions</span><select value={filter} onChange={(event) => { setFilter(event.target.value); setLookup(""); }}>
           <option value="ALL">All decisions</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="APPROVAL_ID">By approval ID</option><option value="APPLICATION_ID">By application ID</option>{isAdmin && <option value="REVIEWER">By reviewer</option>}
@@ -270,11 +265,11 @@ export default function ApprovalsWorkspace({ isAdmin }) {
         <button className="button button-secondary" type="submit" disabled={loading}>Search</button>
       </form>
       {loading ? <p role="status">Loading approvals...</p> : error ? <div className="inline-error" role="alert">{error}<button className="button button-secondary small-button" type="button" onClick={refresh}>Retry</button></div> : approvals.length === 0 ? <p>No decisions found.</p> : <div className="table-wrap"><table>
-        <thead><tr><th>Approval ID</th><th>Application ID</th><th>Status</th><th>Reviewer</th><th>Reviewed at</th><th>Action</th></tr></thead>
+        <thead><tr><th>Approval ID</th><th>Application ID</th><th>Credit assessment ID</th><th>Decision</th><th>Reviewer</th><th>Remarks</th><th>Decision date</th><th>Action</th></tr></thead>
         <tbody>{approvals.map((approval, index) => <tr key={approval.approvalId ?? index} onClick={() => setSelectedApproval(approval)}>
-          <td>{approval.approvalId ?? "-"}</td><td>{approval.applicationId ?? "-"}</td><td>{approval.status ?? "-"}</td><td>{approval.reviewedBy ?? "-"}</td><td>{approval.reviewedAt ?? approval.createdAt ?? "-"}</td><td><button className="text-link" type="button" aria-label={`View approval ${approval.approvalId ?? index + 1}`} onClick={(event) => { event.stopPropagation(); setSelectedApproval(approval); }}><Eye size={14} /> Details</button></td>
+          <td>{approval.approvalId ?? "-"}</td><td>{approval.applicationId ?? "-"}</td><td>{approval.creditAssessmentId ?? "-"}</td><td>{approval.decision ?? "-"}</td><td>{approval.reviewedBy ?? "-"}</td><td>{approval.remarks ?? "-"}</td><td>{approval.decisionDate ?? "-"}</td><td><button className="text-link" type="button" aria-label={`View approval ${approval.approvalId ?? index + 1}`} onClick={(event) => { event.stopPropagation(); setSelectedApproval(approval); }}><Eye size={14} /> Details</button></td>
         </tr>)}</tbody>
       </table></div>}
-    </section>
+    </section>}
   </div>;
 }

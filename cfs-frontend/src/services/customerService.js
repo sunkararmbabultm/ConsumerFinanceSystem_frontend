@@ -40,8 +40,8 @@ export async function getCustomerOnboardingStatus(customerId) {
   return data;
 }
 
-export async function updateKycStatus(customerId, status, remarks) {
-  const { data } = await api.patch(`/api/customers/${encodeURIComponent(customerId)}/kyc-status`, { status, remarks });
+export async function requestCustomerKycReview(customerId) {
+  const { data } = await api.post(`/api/customers/${encodeURIComponent(customerId)}/kyc-review`);
   return data;
 }
 

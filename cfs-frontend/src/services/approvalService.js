@@ -20,16 +20,6 @@ export async function listApprovals() {
   return data;
 }
 
-export async function listPendingApprovals() {
-  const { data } = await api.get("/api/approvals/pending");
-  return data;
-}
-
-export async function getApprovalReview(applicationId) {
-  const { data } = await api.get(`/api/approvals/review/${encodeURIComponent(applicationId)}`);
-  return data;
-}
-
 export async function listApprovalsByStatus(status) {
   const { data } = await api.get(`/api/approvals/status/${encodeURIComponent(status)}`);
   return data;
