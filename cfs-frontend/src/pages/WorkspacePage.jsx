@@ -6,6 +6,7 @@ import { ApplicationDetails, DetailDialog, LoanProductsWorkspace, ProductDetails
 import ApprovalsWorkspace from "../components/ApprovalsWorkspace";
 import CreditAssessmentsWorkspace, { StaffApplicationQueueWorkspace } from "../components/CreditAssessmentsWorkspace";
 import { AdminNotificationWorkspace, CustomerEmiWorkspace, CustomerNotificationsWorkspace, CustomerRepaymentsWorkspace, DisbursementsWorkspace } from "../components/LoanServicingWorkspaces";
+import AdminEmiManagementWorkspace from "../components/AdminEmiManagementWorkspace";
 import { createApproval } from "../services/approvalService";
 import { getAssessmentForApplication } from "../services/creditAssessmentService";
 import { createInternalUser } from "../services/authService";
@@ -839,7 +840,7 @@ export default function WorkspacePage() {
   const { section = "" } = useParams();
   const { user } = useAuth();
   const isAdmin = user?.role !== "CUSTOMER";
-  const title = titles[section] || "Finance workspace";
+  const title = section === "emi" && user?.role === "ADMIN" ? "EMI Management" : titles[section] || "Finance workspace";
 
   if (section === "review-queue") {
     return <Navigate to={user?.role === "LOAN_OFFICER" ? "/admin" : "/admin/applications"} replace />;
@@ -850,7 +851,7 @@ export default function WorkspacePage() {
   }
 
   if (["apply", "profile", "emi", "kyc", "users"].includes(section)) {
-    const customerOnly = ["apply", "profile", "emi"].includes(section);
+    const customerOnly = ["apply", "profile"].includes(section) || (section === "emi" && user?.role === "CUSTOMER");
     const adminOnly = ["kyc", "users"].includes(section);
     if ((customerOnly && user?.role !== "CUSTOMER") || (adminOnly && user?.role !== "ADMIN")) {
       return <Navigate to={user?.role === "CUSTOMER" ? "/customer" : "/admin"} replace />;
@@ -907,6 +908,14 @@ export default function WorkspacePage() {
     return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">LOAN SERVICING</p><h1>{title}</h1></div></section>
       {canManage ? <DisbursementsWorkspace canManage={canManage} /> : <div className="inline-error" role="alert">Only administrators and credit managers can access disbursements.</div>}
     </div>;
+  }
+
+  if (section === "emi" && user?.role === "ADMIN") {
+    return <div className="page-stack page-enter"><section className="page-heading"><div><p className="eyebrow">LOAN SERVICING</p><h1>EMI Management</h1><p>Generate and verify loan account schedules for disbursed applications.</p></div></section><AdminEmiManagementWorkspace /></div>;
+  }
+
+  if (section === "emi" && user?.role !== "CUSTOMER") {
+    return <Navigate to="/admin" replace />;
   }
 
   if (section === "notifications" && user?.role === "ADMIN") {

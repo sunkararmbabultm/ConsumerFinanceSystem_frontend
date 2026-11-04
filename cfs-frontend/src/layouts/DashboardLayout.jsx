@@ -30,6 +30,7 @@ const adminLinks = [
   { label: "Credit assessments", path: "/admin/assessments", icon: Activity },
   { label: "Approvals", path: "/admin/approvals", icon: ShieldCheck },
   { label: "Disbursements", path: "/admin/disbursement", icon: Wallet },
+  { label: "EMI Management", path: "/admin/emi", icon: CreditCard },
   { label: "Notifications", path: "/admin/notifications", icon: Bell },
 ];
 
